@@ -95,14 +95,24 @@ function demo() {
       parsedAddresses.push(parseAddress.parseLocation(address));
     }
 
-    // Display the parsed addresses in the 'preview' element
-    document.getElementById('preview').innerHTML = JSON.stringify(parsedAddresses, null, 0);
+    // Initialize an empty string to store the CSV output
+    let csv = "";
+
+    // Loop through each parsed address
+    for (const parsed of parsedAddresses) {
+      // Add the street name, number, suite, city, state, and zip to the CSV output
+      csv += `${parsed.streetNumber} ${parsed.streetName}, ${parsed.suite}, ${parsed.city}, ${parsed.state}, ${parsed.zip}\n`;
+    }
+
+    // Display the CSV output in the 'preview' element
+    document.getElementById('preview').innerHTML = csv;
   } catch (e) {
     console.log(e);
   }
 }
-    	document.getElementById('parse-btn').addEventListener('click', demo);
-		demo();
+
+document.getElementById('parse-btn').addEventListener('click', demo);
+demo();
     </script>
   </body>
 </html>
