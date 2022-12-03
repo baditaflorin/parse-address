@@ -101,7 +101,7 @@ function demo() {
     // Loop through each parsed address
     for (const parsed of parsedAddresses) {
       // Add the street name, number, suite, city, state, and zip to the CSV output
-      csv += `${parsed.streetNumber} ${parsed.streetName}, ${parsed.suite}, ${parsed.city}, ${parsed.state}, ${parsed.zip}\n`;
+      csv += `${parsed.number + ' ' + parsed.street + ' ' + parsed.type}, ${parsed.suite}, ${parsed.city}, ${parsed.state}, ${parsed.zip}\n`;
     }
 
     // Display the CSV output in the 'preview' element
