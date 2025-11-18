@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  address-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: address-parser
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_READ_TIMEOUT=${SERVER_READ_TIMEOUT:-10s}
+      - SERVER_WRITE_TIMEOUT=${SERVER_WRITE_TIMEOUT:-10s}
+      - SECURITY_ENABLE_CORS=${SECURITY_ENABLE_CORS:-true}
+      - SECURITY_MAX_INPUT_LENGTH=${SECURITY_MAX_INPUT_LENGTH:-10000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - parser-network
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+networks:
+  parser-network:
+    driver: bridge
