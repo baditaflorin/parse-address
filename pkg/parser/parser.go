@@ -12,15 +12,15 @@ type Parser struct {
 }
 
 type regexPatterns struct {
-	number       *regexp.Regexp
-	street       *regexp.Regexp
-	city         *regexp.Regexp
-	state        *regexp.Regexp
-	zip          *regexp.Regexp
-	secUnit      *regexp.Regexp
-	corner       *regexp.Regexp
-	poBox        *regexp.Regexp
-	directional  *regexp.Regexp
+	number      *regexp.Regexp
+	street      *regexp.Regexp
+	city        *regexp.Regexp
+	state       *regexp.Regexp
+	zip         *regexp.Regexp
+	secUnit     *regexp.Regexp
+	corner      *regexp.Regexp
+	poBox       *regexp.Regexp
+	directional *regexp.Regexp
 }
 
 // NewParser creates a new address parser

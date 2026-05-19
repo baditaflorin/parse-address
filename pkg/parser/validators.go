@@ -16,10 +16,10 @@ const (
 )
 
 var (
-	ErrInputTooLong     = errors.New("input exceeds maximum allowed length")
-	ErrInputEmpty       = errors.New("input is empty")
+	ErrInputTooLong      = errors.New("input exceeds maximum allowed length")
+	ErrInputEmpty        = errors.New("input is empty")
 	ErrInvalidCharacters = errors.New("input contains invalid characters")
-	ErrInvalidUTF8      = errors.New("input is not valid UTF-8")
+	ErrInvalidUTF8       = errors.New("input is not valid UTF-8")
 )
 
 // ValidateInput performs security and sanity checks on input strings
