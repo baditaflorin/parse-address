@@ -8,6 +8,20 @@ propagated to every fleet repo via `fleet-runner inject`.
 If you find a stale copy that differs from this one, the registry copy
 wins — refresh and re-propagate, don't fork it.
 
+> ## ⚠️ RULE ZERO — work against `origin/main`, NOT stale workspace code
+>
+> **Before you read, triage, build, bump, or deploy ANYTHING:**
+> `git fetch origin --tags` first, then operate against `origin/main`
+> (via `git show origin/main:<file>` or a fresh
+> `git worktree add … origin/main`). The shared
+> `/root/workspace/<repo>/` working tree is whatever the last (often
+> parallel) agent left it — routinely **months stale**. Acting on it
+> ships old code, opens PRs against already-fixed bugs, and lets
+> concurrent agents stomp each other. `fleet-runner build-test` runs
+> against the working tree and is NOT freshness-correct — confirm any
+> "failure" against a fresh `origin/main` worktree before triaging.
+> Details below under "pull often, push often." DON'T SKIP THIS.
+
 Per-service specifics (port, mesh, slug, version, category) live in
 the repo's own `service.yaml` + `deploy.yaml` + `README.md`. This file
 is intentionally generic — it explains the *fleet*, not any one
@@ -129,15 +143,153 @@ further (e.g. needs a browser engine, needs paid threat intel).
 
 ## Key sibling repos
 
-| Repo                  | Role                                                                           | Visibility |
-|-----------------------|--------------------------------------------------------------------------------|------------|
-| `services-registry`   | canonical catalog (services.json + FLEET.md + this file)                       | PUBLIC     |
+| Repo                  | Role                                                                                | Visibility |
+|-----------------------|-------------------------------------------------------------------------------------|------------|
+| `services-registry`   | canonical catalog (services.json + FLEET.md + this file)                            | PUBLIC     |
 | `go-common`           | shared Go lib — SSRF-safe HTTP, jsbundle recovery, **apikey client**, ua, middleware | PUBLIC |
-| `go-apikey-service`   | **the keystore** — issues/verifies/revokes API keys for `mesh-0exec`           | varies     |
-| `go-catalog-service`  | renders services.json into `catalog.0exec.com`                                 | PRIVATE    |
-| `go_fleet_runner`     | CLI to operate the fleet (`health`, `smoke`, `inject`, `push`, …)              | PRIVATE    |
-| `0crawl-platform`     | nginx vhost templates (also embedded in fleet-runner)                          | PRIVATE    |
-| `fleet-state`         | live operational state, runbooks, SSH topology                                 | PRIVATE    |
+| `mesh-common`         | shared TS/React runtime for the `mesh-*` P2P fleet (see "mesh-* P2P fleet" below)   | PUBLIC     |
+| `go-fleet-persona`    | cross-app + cross-origin display-identity service (`persona.0exec.com`)             | PUBLIC     |
+| `go-apikey-service`   | **the keystore** — issues/verifies/revokes API keys for `mesh-0exec`                | varies     |
+| `go-catalog-service`  | renders services.json into `catalog.0exec.com`                                      | PRIVATE    |
+| `go_fleet_runner`     | CLI to operate the fleet (`health`, `smoke`, `inject`, `push`, …)                   | PRIVATE    |
+| `0crawl-platform`     | nginx vhost templates (also embedded in fleet-runner)                               | PRIVATE    |
+| `fleet-state`         | live operational state, runbooks, SSH topology                                      | PRIVATE    |
+
+## mesh-* P2P fleet — separate from the container fleet
+
+The `mesh-*` repos under `baditaflorin/*` are a **distinct fleet** from the
+0exec/0crawl container services described above. They are browser-only,
+rootless WebRTC apps published as static GitHub Pages sites (`kind: static`,
+`mesh: mesh-pages`). They do not have container images, ports, `/health`
+endpoints, or keystore-gated auth.
+
+Each app depends on **`@baditaflorin/mesh-common`** via `file:../mesh-common`
+so the bundle is fully self-contained on every GH Pages deploy — no npm
+publish step, no runtime dependency on a registry.
+
+### `mesh-common` — shared runtime + drop-in components
+
+Single source of truth for the look, feel, and capabilities of every
+`mesh-*` app. Versioned via `package.json` and `CHANGELOG.md`; consumers
+re-bundle on the next `npm run build`.
+
+Headline primitives (current as of 0.10.x):
+
+| Module                        | What it does                                                                 |
+|-------------------------------|------------------------------------------------------------------------------|
+| `MeshShell`                   | App chrome: ⚙ settings FAB + drawer, 📡 invite QR FAB, self-ref bar, beacon  |
+| `SettingsDrawer`              | Room id + signaling/TURN overrides; injection slot for per-app extras        |
+| `createMeshConfig`            | One-call config factory (app name, accent, version, signaling/TURN defaults) |
+| `useYRoom`                    | `{doc, provider, peerId, peerCount}` for a Yjs room over WebRTC              |
+| `clockSync`                   | NTP-over-Yjs offset → mesh-median time (~10–30 ms stable)                    |
+| `commitReveal`                | SHA-256 commit/reveal for anonymous votes, fair RNG, role assignment         |
+| `identity` + `tofuRegistry`   | Ed25519 keypair + TOFU pinned-pubkey registry (per-room crypto identity)     |
+| `moderator` + `ModeratorBadge`| Signed first-claim-wins role with 30-min auto-expire                         |
+| `PersonalQR` / `QRExchange`   | Inline-SVG QR (real-URL payload) + camera scanner                            |
+| `useAwareness`                | Typed wrapper around `y-protocols/awareness` (presence / cursors / typing)   |
+| `PeerAvatar`                  | Deterministic SVG avatar from peerId / pubkey — zero network, zero PII       |
+| `useTypedMap` / `useTypedArray` | Zod-validated `Y.Map` / `Y.Array` — hostile peers' writes filtered at the edge |
+| `useRoomSeal` / `deriveRoomKey` | Room-wide AES-GCM seal via PBKDF2(passphrase, roomId) — opt-in E2E         |
+| `MeshErrorBoundary`           | Drop-in crash containment for the `<Feature>` subtree                        |
+| `useMeshLink`                 | Typed encoder/parser for the `#r=…&p=…&x=…` deep-link fragment               |
+| `useMultiRoom`                | Run several Yjs rooms in one tab (facilitator dashboards, embeds, side-by-side) |
+| `usePresenceCursors`          | Figma-style live cursors built on `useAwareness`                             |
+| `useThreadedMessages`         | `Y.Map<msgId, {parent, body, by, at, sig}>` with `post()` / `reply()`        |
+| `useReadReceipts`             | Per-peer monotone "last seen at message N"                                   |
+| `useOfflineQueue`             | Buffer writes when isolated; replay through `flush()` on reconnect           |
+| `useFileShare`                | Chunked file share through the Yjs transport                                 |
+| `SafeMarkdown`                | Allow-list-sanitised Markdown via `marked` (no raw HTML pass-through)        |
+| `useFakeTime`                 | Test-only clock fixture; production collapses to `Date.now()`                |
+| **`useFleetPersona`**         | **Cross-app + cross-origin display identity (nickname + name + avatar)**     |
+| **`FleetAvatar`**             | **Drop-in avatar for the current fleet persona; reuses `PeerAvatar`**        |
+| **`FleetIdentityPanel`**      | **Drop-in settings UI; auto-mounted inside `MeshShell` by default in 0.10.1+**|
+
+### Fleet identity (`fleetPersona`) — three-tier resolver
+
+`useFleetPersona({ appName, serviceUrl? })` resolves a `FleetPersona`
+(`nickname + name + avatarSeed + avatarVariant + paletteIndex`) through
+three tiers, falling back gracefully if any is unavailable:
+
+| Tier | Where                       | Notes                                                                         |
+|------|-----------------------------|-------------------------------------------------------------------------------|
+| L0   | per-app `localStorage`      | Always wins once the user types something                                     |
+| L1   | same-origin `localStorage`  | **Free** on GH Pages — every `mesh-*` app under `baditaflorin.github.io` shares one origin |
+| L2   | `https://persona.0exec.com` | Optional cross-origin sync; 2 s fetch timeout; fire-and-forget; service-down → silent |
+
+The L2 fetch never blocks the UI; if the service is down or slow, L0/L1
+keep the user's identity intact. Writes from app code propagate down the
+stack respecting the per-app `mode` setting (`off` / `local-fleet` /
+`remote-fleet`).
+
+Field validation: strict ASCII allowlist `^[A-Za-z0-9_\- .]{1,32}$` on
+every text field — identical on client and server, neutralises a class
+of stored-XSS / homoglyph concerns. `anonId` and `writeToken` are
+128-bit hex; `writeToken` is held only inside the module's closure so
+app code cannot accidentally exfiltrate it.
+
+Cross-origin handoff: `fp.buildHandoffUrl(targetOrigin)` returns a URL
+with `#fp=<base64>` that carries `anonId + writeToken + persona`. Open
+on the new origin → `useFleetPersona` auto-consumes the fragment on
+mount, wipes the hash from the URL, and the new origin has the same
+identity. Works with `PersonalQR` for cross-device transfer.
+
+`MeshShell` mounts `FleetIdentityPanel` inside the settings drawer by
+default in mesh-common ≥ 0.10.1. Apps that want to opt out (kiosks,
+apps that own their own identity flow) pass `fleetIdentityServiceUrl={null}`;
+apps that want a staging endpoint pass their own URL.
+
+### `go-fleet-persona` — companion service for L2 sync
+
+Public URL: **`https://persona.0exec.com`** (canonical) and
+`https://fleet-persona.0exec.com` (alias).
+
+| Aspect            | Value                                                                          |
+|-------------------|--------------------------------------------------------------------------------|
+| Registry id       | `fleet-persona`                                                                |
+| Mesh / kind / runtime | `mesh-0exec` / `container` / `compose`                                     |
+| Port              | `18209` (host) → `18209` (container)                                           |
+| Image             | `ghcr.io/baditaflorin/fleet-persona:<sha>` (cosign-signed)                     |
+| Auth              | `none` — **public read by design**; writes argon2id-gated by client-held writeToken |
+| Storage           | pure-Go SQLite (`modernc.org/sqlite`) on a single docker volume                |
+| Tests             | 21 Go unit + handler tests; `testing/smoke.sh` runs the full lifecycle end-to-end |
+
+Wire surface:
+
+```
+GET    /v1/health                → 200 { ok, ver, ts, ro }
+GET    /health                   → same (fleet canonical alias)
+GET    /selftest                 → 200 { ok, ver, checks[] }  (200 = all green, 503 = any fail)
+GET    /v1/persona/{anonId}      → 200 { nickname, name, avatarSeed, avatarVariant, paletteIndex, updatedAt } | 404
+PUT    /v1/persona/{anonId}      → 204    body: { …persona, writeToken }
+DELETE /v1/persona/{anonId}      → 204    body: { writeToken }
+```
+
+CORS is `*` by design — the read API is public; `anonId` itself is the
+only read-secret (and display names are non-PII). Writes require a
+separate 128-bit `writeToken` argon2id-hashed at rest.
+
+Privacy stance: no IP addresses stored (only short-lived hashes in
+rate-limit buckets, daily-rotated salt); no User-Agent / Referer / app
+name kept; no mapping that lets the operator reconstruct which apps a
+browser opens.
+
+Rate limits: 60 reads/min/IP and 30 writes/hour/(IP, anonId) by default;
+4 KB body cap; global read-only kill switch via `-read-only` flag.
+
+### When building or auditing a `mesh-*` app
+
+- `kind: static` — no Dockerfile, no `/health`, no keystore. The
+  ⚙ FAB renders `SettingsDrawer` which auto-mounts `FleetIdentityPanel`
+  on `mesh-common ≥ 0.10.1`. No per-app code needed to surface the panel.
+- HTML/CSS/JS published from `docs/`. Build locally with `npm run build`;
+  commit `docs/` and push. GH Pages serves it within ~1 min.
+- Pre-commit hook runs `bash scripts/smoke.sh` (vitest unit tests +
+  `vite build` + sanity-check `docs/index.html`). **Never `--no-verify`**;
+  if it fails, run `npm run fmt` and re-commit.
+- `useFleetPersona` is the canonical way to read/write the user's display
+  name — never roll your own `myName` localStorage key for new apps.
+  Existing apps can migrate at their own pace; the panel is opt-in for
+  the user via the sync-mode radio.
 
 ## Auth — both container meshes use the **same** keystore (`go-apikey-service`)
 
@@ -379,6 +531,37 @@ the per-repo topic-derived entries take over with the same slugs.
 }
 ```
 
+**External / third-party containers** (via reserved `$external` key) —
+third-party upstream containers (Plausible, …) that run on the
+dockerhost but are NOT in the fleet repo set: no `mesh-*` GitHub
+topic for the generator to latch onto, no fleet-runner ownership of
+the compose file. Without a registry row their `host_port` is
+invisible to `allocate-port` — and the next deploy will silently
+re-claim it (the 2026-05-19 plausible incident). One row here keeps
+the allocator honest. Defaults to `runtime: external`, which gates
+fleet-runner deploy/build off so the upstream compose dir stays
+untouched. `$rules` are NOT applied to `$external` entries (fleet
+knobs like `cert_domain` / `proxy_egress` have no meaning for an
+upstream-managed container). See ADR-0031.
+
+```json
+{
+  "$external": [
+    {
+      "id": "plausible",
+      "name": "Plausible Analytics",
+      "host_port": 18204,
+      "container_port": 8000,
+      "repo_url": "https://github.com/plausible/community-edition",
+      "auth": { "type": "none" },
+      "external_compose_dir": "/opt/services/plausible/",
+      "external_image": "ghcr.io/plausible/community-edition:v3.2.1",
+      "why": "fleet-pixel's optional upstream; runs at /opt/services/plausible/ — register so allocate-port sees 18204 as taken"
+    }
+  ]
+}
+```
+
 **Audit surface** — never grep overrides by hand:
 
 ```
@@ -390,6 +573,64 @@ fleet-runner overrides audit                # stale slugs, unused rules, key ado
 `fleet-runner converge` also surfaces overrides drift (stale per-slug
 entries that reference removed services; rules with no matching
 service).
+
+## Temporary degradations — read before deploying
+
+The fleet has two TEMPORARY workarounds active as of 2026-05-21. Both
+are tracked, both have separate fixes in flight, both must be removed
+from this doc when the underlying issue ships. Treat them as known
+degradations, NOT "this is fine".
+
+### `fleet-runner new-service` is broken — DO NOT USE (until further notice)
+
+Three known bugs: it double-prefixes the service name, references an
+undefined `safehttp.CheckURL`, and `--push` doesn't actually push.
+Separate fix in flight against `go_fleet_runner`. Until that fix ships
+AND the binary on Builder LXC 108 is updated, the canonical scaffold
+path is **copy-from-peer**:
+
+```bash
+# 1. Copy a recent successful peer in the same mesh + language.
+cp -r go_domain_amp_detector go_domain_<new>
+cd go_domain_<new>
+rm -rf .git
+# Search/replace identifiers (id, name, slug, port, description).
+# Allocate the port first (via the fleet-runner shim, or the explicit
+# bastion form documented in "How to invoke fleet-runner" below):
+fleet-runner allocate-port --count 1
+
+# 2. Init + create the GitHub repo + push.
+git init && git add -A && git commit -m "initial scaffold from go_domain_amp_detector"
+gh repo create baditaflorin/<repo> --private --source=. --remote=origin \
+  --description "<one-line description>" --push
+
+# 3. Tag the first version.
+git tag 0.1.0 && git push origin 0.1.0
+
+# 4. Add the canonical GitHub topics so bin/generate.py picks it up.
+gh repo edit --add-topic mesh-0crawl \
+             --add-topic kind-container \
+             --add-topic language-go \
+             --add-topic runtime-compose \
+             --add-topic category-<cat>
+```
+
+Remove this section when `fleet-runner new-service` is fixed and the
+LXC 108 binary is updated.
+
+### `--skip-cosign` is the temporary norm (vault key empty)
+
+Cosign signing is currently disabled fleet-wide because the vault's
+`cosign-signing-key` is empty (separate investigation in flight).
+Until it's restored, deploy with `--skip-cosign`:
+
+```bash
+fleet-runner deploy go_<repo> --skip-cosign
+```
+
+**Production images going through `deploy` right now are NOT
+cosign-verified.** This is a security degradation, not a stylistic
+choice — re-enable cosign as soon as the vault key is restored.
 
 ## fleet-runner
 
@@ -734,7 +975,34 @@ Tag *after* the commit, push *both*.
 **Canonical (only one right answer):**
 
 ```bash
-ssh root@0docker.com 'pct exec 108 -- /usr/local/bin/fleet-runner deploy go_<repo>'
+fleet-runner deploy go_<repo> \
+  --services /root/workspace/services-registry/services.json \
+  --skip-cosign
+```
+
+Two non-obvious flags above, both TEMPORARY (see "Temporary
+degradations" near the top of this file):
+
+- `--services /root/workspace/services-registry/services.json` —
+  `raw.githubusercontent.com/.../services.json` is Fastly-cached with
+  `max-age=300`, so after a freshly-pushed `overrides.json` the
+  registry slice can lag 3–5 minutes. Pointing at the local copy on
+  LXC 108 sidesteps the cache. Apply the same flag to `nginx-render`
+  and any other subcommand that reads the registry. Remove when
+  `fleet-runner` defaults to the local copy.
+- `--skip-cosign` — vault's `cosign-signing-key` is currently empty;
+  signing is disabled fleet-wide. Remove when the vault key is
+  restored.
+
+**Post-deploy: re-render the vhost.** The embedded `nginx-render`
+step inside `deploy` often misses the new vhost due to the same
+registry-fetch race. Until `fleet-runner deploy` folds in the local
+fetch (separate fix in flight), follow every new-service deploy with:
+
+```bash
+fleet-runner nginx-render \
+  --services /root/workspace/services-registry/services.json \
+  --filter <slug> --push --reload
 ```
 
 `fleet-runner deploy` is idempotent end-to-end. The pipeline is built
@@ -813,12 +1081,15 @@ container is running. Don't declare done until both succeed.
 ### Recipe — Self-check before declaring "done"
 
 Three commands. Run all three. If anything in the category you touched
-is flagged, fix it before stopping:
+is flagged, fix it before stopping. Pass `--services
+/root/workspace/services-registry/services.json` so a just-registered
+service doesn't get missed because of the 5-minute Fastly cache on
+`raw.githubusercontent.com`:
 
 ```bash
-ssh root@0docker.com 'pct exec 108 -- /usr/local/bin/fleet-runner converge'
-ssh root@0docker.com 'pct exec 108 -- /usr/local/bin/fleet-runner audit --all'
-ssh root@0docker.com 'pct exec 108 -- /usr/local/bin/fleet-runner state snapshot'
+fleet-runner converge       --services /root/workspace/services-registry/services.json
+fleet-runner audit --all    --services /root/workspace/services-registry/services.json
+fleet-runner state snapshot --services /root/workspace/services-registry/services.json
 ```
 
 ### Recipe — Closing a capability gap (gap → fix loop)
@@ -942,6 +1213,23 @@ for the canonical pattern.
    required manual `git tag -d <ver>`. If you hit that on an older
    binary, the recovery is still: `git -C /root/workspace/<repo>
    tag -d <ver>` then re-run bump-version.
+
+9. **`./binary &` smoke tests on Builder LXC 108.** Don't. The builder
+   is a build host and `fleet-runner` host — it is **not** a service
+   host. When an agent runs `go build && ./binary &` inside
+   `/root/workspace/<repo>/` to "quickly check the handler responds,"
+   the binary backgrounds, the agent's SSH session ends, and the
+   process becomes an orphan (`PPid=1`) listening on whichever port it
+   bound. Twelve such orphans were found on 2026-05-21 — three of them
+   silently squatting *registered* host_ports (e.g. 18107/18224),
+   poised to confuse the next agent who deploys the canonical service
+   to dockerhost and runs `ss -tlnp` to debug. Canonical smoke is the
+   `fleet-runner deploy` smoke gate against the dockerhost-side
+   container, not an in-process binary on the builder. If you genuinely
+   need to exercise the handler before `deploy`, run `go test ./...`
+   (which uses `httptest`) — no port binding, no orphan risk. If you
+   *must* bind a port, use `127.0.0.1:0` (ephemeral) and `kill` it on
+   the same line that started it.
 
 ## Fleet-wide changes — change `go-common`, not consumers
 
