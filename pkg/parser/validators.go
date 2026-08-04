@@ -57,12 +57,36 @@ func SanitizeInput(input string) string {
 	// Trim leading/trailing whitespace
 	input = strings.TrimSpace(input)
 
-	// Limit length for safety
+	// Limit length for safety. Slicing at a raw byte offset can land in
+	// the middle of a multi-byte UTF-8 rune (e.g. non-Latin-script city/
+	// street names), producing an invalid UTF-8 tail that later gets
+	// silently mangled (e.g. replaced with U+FFFD) by anything that
+	// re-validates or re-encodes the string. Back off to the nearest
+	// rune boundary instead.
 	if len(input) > MaxAddressLength {
-		input = input[:MaxAddressLength]
+		input = truncateAtRuneBoundary(input, MaxAddressLength)
 	}
 
 	return input
+}
+
+// truncateAtRuneBoundary truncates s to at most maxBytes bytes without
+// splitting a multi-byte UTF-8 rune. If the raw byte cut lands inside a
+// multi-byte rune, that trailing partial rune is dropped entirely rather
+// than left as invalid UTF-8.
+func truncateAtRuneBoundary(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 {
+		r, size := utf8.DecodeLastRuneInString(s)
+		if r != utf8.RuneError || size != 1 {
+			break // last rune decodes cleanly (valid and complete)
+		}
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // ValidateAndSanitize combines validation and sanitization

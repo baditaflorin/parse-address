@@ -343,3 +343,176 @@ func BenchmarkParseLocation(b *testing.B) {
 		p.ParseLocation(addr)
 	}
 }
+
+// TestStreetNamesWithoutRecognizedSuffix guards against a regression where
+// NormalizeStreetType returned the lower-cased input for *any* unrecognized
+// word (instead of ""), which made the caller's case-sensitive comparison
+// spuriously treat every capitalized, non-suffix street-name word as a
+// street type - stripping it out of the street name entirely. Streets like
+// "Broadway" or "Peachtree" that don't end in a suffix (St/Ave/Blvd/...)
+// are common in real US addresses.
+func TestStreetNamesWithoutRecognizedSuffix(t *testing.T) {
+	p := NewParser()
+
+	tests := []struct {
+		name     string
+		input    string
+		wantType string // parse type ("address"/"po_box"/...)
+		expected ParsedAddress
+	}{
+		{
+			name:  "Broadway has no street type suffix",
+			input: "1 Broadway, New York, NY 10004",
+			expected: ParsedAddress{
+				Number: "1",
+				Street: "Broadway",
+				City:   "New York",
+				State:  "NY",
+				ZIP:    "10004",
+			},
+		},
+		{
+			name:  "Peachtree has no street type suffix",
+			input: "123 Peachtree, Atlanta, GA 30303",
+			expected: ParsedAddress{
+				Number: "123",
+				Street: "Peachtree",
+				City:   "Atlanta",
+				State:  "GA",
+				ZIP:    "30303",
+			},
+		},
+		{
+			name:  "Non-English street name word (Calle Sol)",
+			input: "123 Calle Sol, San Juan, PR 00901",
+			expected: ParsedAddress{
+				Number: "123",
+				Street: "Calle Sol",
+				City:   "San Juan",
+				State:  "PR",
+				ZIP:    "00901",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := p.ParseAddress(tt.input)
+			if result.Number != tt.expected.Number {
+				t.Errorf("Number: got %q, want %q", result.Number, tt.expected.Number)
+			}
+			if result.Street != tt.expected.Street {
+				t.Errorf("Street: got %q, want %q", result.Street, tt.expected.Street)
+			}
+			if result.Type != "" {
+				t.Errorf("Type: got %q, want empty (word isn't a real street type)", result.Type)
+			}
+			if result.City != tt.expected.City {
+				t.Errorf("City: got %q, want %q", result.City, tt.expected.City)
+			}
+			if result.State != tt.expected.State {
+				t.Errorf("State: got %q, want %q", result.State, tt.expected.State)
+			}
+			if result.ZIP != tt.expected.ZIP {
+				t.Errorf("ZIP: got %q, want %q", result.ZIP, tt.expected.ZIP)
+			}
+		})
+	}
+}
+
+// TestNoCommaAddressWithSecondaryUnit guards against a regression where a
+// comma-less address with an abbreviated street type ("St" rather than
+// "Street") caused the city-boundary walkback to not recognize the street
+// type as a stopping point, swallowing the street name, secondary unit
+// type, and secondary unit number into the "city" field.
+func TestNoCommaAddressWithSecondaryUnit(t *testing.T) {
+	p := NewParser()
+
+	result := p.ParseAddress("123 Main St Apt 4B San Francisco CA 94105")
+
+	if result.Street != "Main" {
+		t.Errorf("Street: got %q, want %q", result.Street, "Main")
+	}
+	if result.Type != "st" {
+		t.Errorf("Type: got %q, want %q", result.Type, "st")
+	}
+	if result.SecUnitType != "Apt" {
+		t.Errorf("SecUnitType: got %q, want %q", result.SecUnitType, "Apt")
+	}
+	if result.SecUnitNum != "4B" {
+		t.Errorf("SecUnitNum: got %q, want %q", result.SecUnitNum, "4B")
+	}
+	if result.City != "San Francisco" {
+		t.Errorf("City: got %q, want %q", result.City, "San Francisco")
+	}
+}
+
+// TestCommaBeforeBareZIP guards against a regression where an address with
+// a comma but no recognizable trailing state (e.g. "Street, ZIP" once the
+// ZIP has already been extracted, leaving an empty trailing comma-part)
+// caused the entire street portion to be misassigned to "city" and
+// discarded from further parsing, leaving Number/Street/Type all empty.
+func TestCommaBeforeBareZIP(t *testing.T) {
+	p := NewParser()
+
+	result := p.ParseAddress("1005 Gravenstein Hwy, 95472")
+
+	if result.Number != "1005" {
+		t.Errorf("Number: got %q, want %q", result.Number, "1005")
+	}
+	if result.Street != "Gravenstein" {
+		t.Errorf("Street: got %q, want %q", result.Street, "Gravenstein")
+	}
+	if result.Type != "hwy" {
+		t.Errorf("Type: got %q, want %q", result.Type, "hwy")
+	}
+	if result.ZIP != "95472" {
+		t.Errorf("ZIP: got %q, want %q", result.ZIP, "95472")
+	}
+}
+
+// TestIntersectionWithAmpersand guards against a regression where the
+// corner-detection regex wrapped "&"/"@" in \b word-boundary assertions.
+// \b is unsatisfiable around a non-word character that's itself surrounded
+// by non-word characters (e.g. a space on each side), so "5th Ave & Main
+// St" - the normal, space-separated way "&" appears - never matched.
+func TestIntersectionWithAmpersand(t *testing.T) {
+	p := NewParser()
+
+	result := p.ParseIntersection("5th Ave & Main St")
+	if result == nil {
+		t.Fatal("ParseIntersection returned nil")
+	}
+	if result.Street1 != "5th" || result.Type1 != "ave" {
+		t.Errorf("Street1/Type1: got %q/%q, want %q/%q", result.Street1, result.Type1, "5th", "ave")
+	}
+	if result.Street2 != "Main" || result.Type2 != "st" {
+		t.Errorf("Street2/Type2: got %q/%q, want %q/%q", result.Street2, result.Type2, "Main", "st")
+	}
+}
+
+// TestIntersectionCityStateWithoutComma guards against a regression where
+// a city+state combo not itself separated by a comma (e.g. "San Francisco
+// CA" following "Valencia St,") caused the whole segment to be dropped
+// instead of just the state token, losing the city and leaving state/city
+// junk stuck onto Street2/Type2.
+func TestIntersectionCityStateWithoutComma(t *testing.T) {
+	p := NewParser()
+
+	result := p.ParseIntersection("Mission St and Valencia St, San Francisco CA")
+	if result == nil {
+		t.Fatal("ParseIntersection returned nil")
+	}
+	if result.Street2 != "Valencia" {
+		t.Errorf("Street2: got %q, want %q", result.Street2, "Valencia")
+	}
+	if result.Type2 != "st" {
+		t.Errorf("Type2: got %q, want %q", result.Type2, "st")
+	}
+	if result.City != "San Francisco" {
+		t.Errorf("City: got %q, want %q", result.City, "San Francisco")
+	}
+	if result.State != "CA" {
+		t.Errorf("State: got %q, want %q", result.State, "CA")
+	}
+}
