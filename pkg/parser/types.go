@@ -2,6 +2,8 @@ package parser
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ParsedAddress represents a fully parsed street address
@@ -71,7 +73,16 @@ func (p *ParsedAddress) Normalize() {
 	p.Plus4 = strings.TrimSpace(p.Plus4)
 }
 
-// titleCase converts a string to title case
+// titleCase converts a string to title case.
+//
+// Street/city names aren't limited to ASCII (e.g. Puerto Rico municipios
+// like "Añasco" or "Bayamón", or "Montréal"/"Örebro" for international
+// input). word[:1] / word[1:] slice by byte offset, not rune offset, so
+// for any word starting with a multi-byte UTF-8 character that would cut
+// the first rune in half - both halves then decode as invalid UTF-8,
+// and strings.ToUpper/ToLower silently replace the mangled rune with the
+// U+FFFD replacement character, permanently destroying the original
+// letter. Decode the first rune explicitly instead of slicing by byte.
 func titleCase(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -79,9 +90,16 @@ func titleCase(s string) string {
 	}
 	words := strings.Fields(s)
 	for i, word := range words {
-		if len(word) > 0 {
-			words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+		if word == "" {
+			continue
 		}
+		r, size := utf8.DecodeRuneInString(word)
+		if r == utf8.RuneError && size <= 1 {
+			// Not valid UTF-8 at this position; leave the word untouched
+			// rather than risk further corrupting it.
+			continue
+		}
+		words[i] = string(unicode.ToUpper(r)) + strings.ToLower(word[size:])
 	}
 	return strings.Join(words, " ")
 }

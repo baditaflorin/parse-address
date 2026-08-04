@@ -51,8 +51,14 @@ func (p *Parser) init() {
 		// Secondary unit: Apt, Suite, Unit, #, etc.
 		secUnit: regexp.MustCompile(`(?i)(?:\b(apt|apartment|suite|ste|unit|#|room|rm|floor|fl|building|bldg)\W*([a-z0-9\-]+)|(\bbasement\b|\bfront\b|\brear\b))`),
 
-		// Intersection indicators
-		corner: regexp.MustCompile(`(?i)\b(and|at|&|@)\b`),
+		// Intersection indicators. "&" and "@" are not word characters,
+		// so wrapping them in \b (as the original `\b(and|at|&|@)\b`
+		// pattern did) is unsatisfiable when they're surrounded by spaces
+		// (the normal case, e.g. "Main St & Elm Ave") - \b requires a
+		// word/non-word transition, and both the space and the symbol are
+		// non-word. Only "and"/"at" need \b, to avoid matching inside
+		// other words (e.g. "Sandusky").
+		corner: regexp.MustCompile(`(?i)\b(and|at)\b|[&@]`),
 
 		// PO Box
 		poBox: regexp.MustCompile(`(?i)^[^\w]*p\W*(?:o|ost\s*office)?\W*box\W*(\d+)`),
@@ -134,21 +140,46 @@ func (p *Parser) ParseAddress(address string) *ParsedAddress {
 		address = p.patterns.zip.ReplaceAllString(address, "")
 	}
 
+	// Extract secondary unit (apartment, suite, etc.) before splitting off
+	// state/city. The single-line (no-comma) city detection below walks
+	// backward from the state token looking for a street-type word or the
+	// house number as the boundary of "city"; if the secondary unit
+	// (e.g. "Apt 4B") is still in the address at that point, it isn't
+	// recognized as a boundary and gets swallowed into the city instead
+	// of being available for secondary-unit extraction.
+	if matches := p.patterns.secUnit.FindStringSubmatch(address); len(matches) > 0 {
+		if matches[1] != "" {
+			result.SecUnitType = strings.TrimSpace(matches[1])
+			if len(matches) > 2 && matches[2] != "" {
+				result.SecUnitNum = strings.TrimSpace(matches[2])
+			}
+		} else if matches[3] != "" {
+			result.SecUnitType = strings.TrimSpace(matches[3])
+		}
+		address = p.patterns.secUnit.ReplaceAllString(address, " ")
+	}
+
 	// Extract state
 	parts := strings.Split(address, ",")
 	if len(parts) >= 2 {
-		// State is usually in the last part after city
+		// State is usually in the last part after city. Only treat the
+		// preceding comma-part as "city" when a state was actually found
+		// there - otherwise this isn't a "..., City, State" shaped address
+		// (e.g. "1005 Gravenstein Hwy, 95472" after the ZIP has been
+		// stripped leaves a trailing empty part) and blindly consuming
+		// parts[len-2] as city would swallow the entire street portion,
+		// leaving nothing for number/street parsing.
 		lastPart := strings.TrimSpace(parts[len(parts)-1])
 		if matches := p.patterns.state.FindStringSubmatch(lastPart); len(matches) > 0 {
 			result.State = NormalizeState(matches[1])
 			address = strings.TrimSuffix(address, lastPart)
 			address = strings.TrimSuffix(address, ",")
-		}
 
-		// City is usually the second-to-last part
-		if len(parts) >= 2 {
-			result.City = strings.TrimSpace(parts[len(parts)-2])
-			address = strings.Join(parts[:len(parts)-2], ",")
+			// City is usually the second-to-last part
+			if len(parts) >= 2 {
+				result.City = strings.TrimSpace(parts[len(parts)-2])
+				address = strings.Join(parts[:len(parts)-2], ",")
+			}
 		}
 	} else if len(parts) == 1 {
 		// Try to extract state from a single line
@@ -162,10 +193,16 @@ func (p *Parser) ParseAddress(address string) *ParsedAddress {
 					if i > 0 {
 						cityEnd := i
 						cityStart := cityEnd - 1
-						// Find where city starts (after street type or number)
+						// Find where city starts (after street type or number).
+						// NormalizeStreetType recognizes both long-form
+						// ("Street") and already-abbreviated ("St") street
+						// types; a raw StreetType[word] map lookup only
+						// matches long forms, so common abbreviated
+						// addresses like "123 Main St Apt 4B ..." walked
+						// all the way back past the street/unit words to
+						// the house number and swallowed them into "city".
 						for cityStart > 0 {
-							word := strings.ToLower(words[cityStart-1])
-							if _, isType := StreetType[word]; isType {
+							if NormalizeStreetType(words[cityStart-1]) != "" {
 								break
 							}
 							if p.patterns.number.MatchString(words[cityStart-1]) {
@@ -183,18 +220,12 @@ func (p *Parser) ParseAddress(address string) *ParsedAddress {
 		}
 	}
 
-	// Extract secondary unit (apartment, suite, etc.)
-	if matches := p.patterns.secUnit.FindStringSubmatch(address); len(matches) > 0 {
-		if matches[1] != "" {
-			result.SecUnitType = strings.TrimSpace(matches[1])
-			if len(matches) > 2 && matches[2] != "" {
-				result.SecUnitNum = strings.TrimSpace(matches[2])
-			}
-		} else if matches[3] != "" {
-			result.SecUnitType = strings.TrimSpace(matches[3])
-		}
-		address = p.patterns.secUnit.ReplaceAllString(address, " ")
-	}
+	// Any leftover commas (e.g. from a trailing comma the state/city
+	// extraction above didn't consume, such as "Hwy, 95472" once the ZIP
+	// has already been stripped) stick to the adjacent word and break
+	// dictionary lookups like NormalizeStreetType("Hwy,"). Normalize them
+	// to whitespace before final tokenization.
+	address = strings.ReplaceAll(address, ",", " ")
 
 	// Extract street number
 	if matches := p.patterns.number.FindStringSubmatch(address); len(matches) > 0 {
@@ -228,10 +259,15 @@ func (p *Parser) ParseAddress(address string) *ParsedAddress {
 		}
 	}
 
-	// Check for street type (from end)
+	// Check for street type (from end). NormalizeStreetType returns ""
+	// when the word isn't a recognized street type, so a non-empty result
+	// is sufficient here - comparing against the original word is not
+	// only unnecessary but wrong, since NormalizeStreetType always
+	// lower-cases its result and would spuriously "differ" from any
+	// capitalized street-name word that simply isn't a street type.
 	if len(words) > 0 {
 		streetType := NormalizeStreetType(words[len(words)-1])
-		if streetType != "" && streetType != words[len(words)-1] {
+		if streetType != "" {
 			result.Type = streetType
 			words = words[:len(words)-1]
 		}
@@ -329,7 +365,7 @@ func (p *Parser) ParseIntersection(address string) *ParsedIntersection {
 		}
 		if len(words1) > 0 {
 			streetType := NormalizeStreetType(words1[len(words1)-1])
-			if streetType != "" && streetType != words1[len(words1)-1] {
+			if streetType != "" {
 				result.Type1 = streetType
 				words1 = words1[:len(words1)-1]
 			}
@@ -348,16 +384,19 @@ func (p *Parser) ParseIntersection(address string) *ParsedIntersection {
 
 	streetParts := strings.Split(street2, ",")
 	if len(streetParts) > 1 {
-		// Last part might have state
+		// Last part might have city and/or state, e.g. "San Francisco CA"
+		// (no comma between them). Strip the state token out of it (if
+		// present) rather than discarding the whole comma-segment, so the
+		// city portion that remains isn't lost.
 		lastPart := strings.TrimSpace(streetParts[len(streetParts)-1])
 		if matches := p.patterns.state.FindStringSubmatch(lastPart); len(matches) > 0 {
 			result.State = NormalizeState(matches[1])
-			streetParts = streetParts[:len(streetParts)-1]
+			lastPart = strings.TrimSpace(p.patterns.state.ReplaceAllString(lastPart, ""))
 		}
-		if len(streetParts) > 1 {
-			result.City = strings.TrimSpace(streetParts[len(streetParts)-1])
-			street2 = strings.TrimSpace(streetParts[0])
+		if lastPart != "" {
+			result.City = lastPart
 		}
+		street2 = strings.TrimSpace(streetParts[0])
 	}
 
 	words2 := strings.Fields(street2)
@@ -372,7 +411,7 @@ func (p *Parser) ParseIntersection(address string) *ParsedIntersection {
 		}
 		if len(words2) > 0 {
 			streetType := NormalizeStreetType(words2[len(words2)-1])
-			if streetType != "" && streetType != words2[len(words2)-1] {
+			if streetType != "" {
 				result.Type2 = streetType
 				words2 = words2[:len(words2)-1]
 			}

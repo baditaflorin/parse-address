@@ -113,25 +113,41 @@ func parseHandler(p *parser.Parser) http.HandlerFunc {
 			return
 		}
 
+		// Validate and sanitize the input up front, for every parse type.
+		// Previously only the "auto" (default) type routed through
+		// ParseLocation, which internally calls ValidateAndSanitize; the
+		// "standard"/"informal"/"intersection"/"po_box" types called the
+		// parser methods directly on the raw request body, silently
+		// bypassing the documented UTF-8 validation, null-byte rejection,
+		// and length-limit (DoS) protections for those three-quarters of
+		// the API surface.
+		address, err := parser.ValidateAndSanitize(req.Address)
+		if err != nil {
+			respondJSON(w, http.StatusBadRequest, parseResponse{
+				Success: false,
+				Error:   fmt.Sprintf("Invalid address: %v", err),
+			})
+			return
+		}
+
 		var result *parser.ParseResult
-		var err error
 
 		// Route to appropriate parser based on type
 		switch req.Type {
 		case "standard":
-			addr := p.ParseAddress(req.Address)
+			addr := p.ParseAddress(address)
 			result = &parser.ParseResult{Type: "address", Address: addr}
 		case "informal":
-			addr := p.ParseInformalAddress(req.Address)
+			addr := p.ParseInformalAddress(address)
 			result = &parser.ParseResult{Type: "address", Address: addr}
 		case "intersection":
-			inter := p.ParseIntersection(req.Address)
+			inter := p.ParseIntersection(address)
 			result = &parser.ParseResult{Type: "intersection", Intersection: inter}
 		case "po_box":
-			addr := p.ParsePoAddress(req.Address)
+			addr := p.ParsePoAddress(address)
 			result = &parser.ParseResult{Type: "po_box", Address: addr}
 		default: // "auto" or empty
-			result, err = p.ParseLocation(req.Address)
+			result, err = p.ParseLocation(address)
 		}
 
 		if err != nil {
@@ -485,14 +501,26 @@ const indexHTML = `<!DOCTYPE html>
                 const data = await response.json();
 
                 if (!data.success) {
-                    resultsDiv.innerHTML = '<div class="error">Error: ' + (data.error || 'Unknown error') + '</div>';
+                    resultsDiv.innerHTML = '<div class="error">Error: ' + escapeHtml(data.error || 'Unknown error') + '</div>';
                     return;
                 }
 
                 displayResults(data.result);
             } catch (error) {
-                resultsDiv.innerHTML = '<div class="error">Network error: ' + error.message + '</div>';
+                resultsDiv.innerHTML = '<div class="error">Network error: ' + escapeHtml(error.message) + '</div>';
             }
+        }
+
+        // Parsed address components (street, city, etc.) are derived
+        // fairly directly from whatever the user typed into the address
+        // box, so they must never be inserted into innerHTML unescaped -
+        // e.g. an address like '123 <img src=x onerror=alert(1)> Ave'
+        // parses with that markup intact in the "street" field, and
+        // without escaping it would execute when rendered here.
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
         }
 
         function displayResults(result) {
@@ -537,7 +565,7 @@ const indexHTML = `<!DOCTYPE html>
 
         function formatResultItem(label, value) {
             if (!value) return '';
-            return '<div class="result-item"><div class="result-label">' + label + ':</div><div class="result-value">' + value + '</div></div>';
+            return '<div class="result-item"><div class="result-label">' + escapeHtml(label) + ':</div><div class="result-value">' + escapeHtml(value) + '</div></div>';
         }
 
         // Allow Enter key to submit

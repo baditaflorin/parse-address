@@ -326,20 +326,32 @@ func NormalizeDirectional(dir string) string {
 	return ""
 }
 
-// NormalizeStreetType normalizes street type words
+// NormalizeStreetType normalizes street type words. It returns the
+// canonical abbreviation when the word is a recognized street type
+// (either its long form or an already-abbreviated form), and an empty
+// string when the word is not a recognized street type at all.
+//
+// Returning the empty string for unrecognized input is load-bearing:
+// callers use "" to mean "this word is not a street type suffix, leave
+// it as part of the street name". Previously this function returned the
+// lower-cased input verbatim for unrecognized words, which made every
+// caller's `normalized != originalWord` check spuriously true for any
+// capitalized word (because lower-casing always changes the casing),
+// causing ordinary street-name words (e.g. "Broadway", "Sol", "Peachtree")
+// to be misclassified as a street type and stripped out of the street
+// name entirely.
 func NormalizeStreetType(streetType string) string {
-	streetType = strings.ToLower(strings.TrimSpace(streetType))
-	if abbr, ok := StreetType[streetType]; ok {
+	lower := strings.ToLower(strings.TrimSpace(streetType))
+	if abbr, ok := StreetType[lower]; ok {
 		return abbr
 	}
 	// Already an abbreviation
-	streetType = strings.ToLower(streetType)
 	for _, v := range StreetType {
-		if v == streetType {
-			return streetType
+		if v == lower {
+			return v
 		}
 	}
-	return streetType
+	return ""
 }
 
 // NormalizeState normalizes state names to two-letter codes
