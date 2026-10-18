@@ -405,7 +405,10 @@
     wy          : "way",
   };
 
+  // Australian states and territories are needed to parse four-digit AU postcodes.
   var State_Code = {
+    "australian capital territory" : "ACT",
+    "act" : "ACT",
     "alabama" : "AL",
     "alaska" : "AK",
     "american samoa" : "AS",
@@ -443,8 +446,10 @@
     "new jersey" : "NJ",
     "new mexico" : "NM",
     "new york" : "NY",
+    "new south wales" : "NSW",
     "north carolina" : "NC",
     "north dakota" : "ND",
+    "northern territory" : "NT",
     "northern mariana islands" : "MP",
     "ohio" : "OH",
     "oklahoma" : "OK",
@@ -452,16 +457,21 @@
     "palau" : "PW",
     "pennsylvania" : "PA",
     "puerto rico" : "PR",
+    "queensland" : "QLD",
     "rhode island" : "RI",
     "south carolina" : "SC",
+    "south australia" : "SA",
     "south dakota" : "SD",
+    "tasmania" : "TAS",
     "tennessee" : "TN",
     "texas" : "TX",
     "utah" : "UT",
     "vermont" : "VT",
     "virgin islands" : "VI",
     "virginia" : "VA",
+    "victoria" : "VIC",
     "washington" : "WA",
+    "western australia" : "WA",
     "west virginia" : "WV",
     "wisconsin" : "WI",
     "wyoming" : "WY",
@@ -527,12 +537,13 @@
     */
 
     Addr_Match = {
+      separator : '[\\s,.;:#&()\\-/]', // avoid consuming non-Latin letters as separators
       type    : flatten(Street_Type).sort().filter(function(v,i,arr){return arr.indexOf(v)===i }).join('|'),
       fraction : '\\d+\\/\\d+',
       state   : '\\b(?:' + keys(State_Code).concat(values(State_Code)).map(XRegExp.escape).join('|') + ')\\b',
       direct  : values(Directional).sort(function(a,b){return a.length < b.length}).reduce(function(prev,curr){return prev.concat([XRegExp.escape(curr.replace(/\w/g,'$&.')),curr])},keys(Directional)).join('|'),
       dircode : keys(Direction_Code).join("|"),
-      zip     : '(?<zip>\\d{5})[- ]?(?<plus4>\\d{4})?',
+      zip     : '(?<zip>\\d{4,5})[- ]?(?<plus4>\\d{4})?',
       corner  : '(?:\\band\\b|\\bat\\b|&|\\@)',
     };
 
@@ -607,7 +618,7 @@
 
     Addr_Match.city_and_state = '                       \n\
       (?:                                               \n\
-        (?<city>[^\\d,]+?)\\W+                          \n\
+        (?<city>[^\\d,]+?)'+Addr_Match.separator+'+            \n\
         (?<state>'+Addr_Match.state+')                  \n\
       )                                                 \n\
       ';
@@ -622,8 +633,8 @@
       [^\\w\\#]*                                        \n\
       ('+Addr_Match.number+')\\W*                       \n\
       (?:'+Addr_Match.fraction+'\\W*)?                  \n\
-         '+Addr_Match.street+'\\W+                      \n\
-      (?:'+Addr_Match.sec_unit+')?\\W*          #fix2   \n\
+         '+Addr_Match.street+Addr_Match.separator+'+                      \n\
+      (?:'+Addr_Match.sec_unit+')?'+Addr_Match.separator+'*          #fix2   \n\
          '+Addr_Match.place+'                           \n\
       \\W*$','ix');
 
@@ -665,7 +676,7 @@
         return;
       var key = isFinite(k.split('_').pop())? k.split('_').slice(0,-1).join('_'): k ;
       if(parts[k])
-        parsed[key] = parts[k].trim().replace(/^\s+|\s+$|[^\w\s\-#&]/g, '');
+        parsed[key] = parts[k].trim().replace(/[^\p{L}\p{M}\p{N}\s\-#&]/gu, '');
     });
     each(Normalize_Map, function(map,key) {
       if(parsed[key] && map[parsed[key].toLowerCase()]) {

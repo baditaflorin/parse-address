@@ -1,4 +1,5 @@
 var parser = require('./address');
+var bundledParser = require('./parse-address.min.js');
 var assert = require('assert');
 
 var address = {
@@ -589,4 +590,47 @@ var address = {
 Object.keys(address).forEach(function (k) {
   var parsed = parser.parseLocation(k);
   assert.deepEqual(address[k], parsed);
+});
+
+// Unicode checks use the parser's existing street/city/state component order.
+// Australian fixtures also cover four-digit postcodes and full state names.
+var internationalAddresses = {
+  '123 Main St, Añasco, PR 00610': {
+    number: '123',
+    street: 'Main',
+    type: 'St',
+    city: 'Añasco',
+    state: 'PR',
+    zip: '00610'
+  },
+  '123 Sakura Avenue, 神戸市, CA 12345': {
+    number: '123',
+    street: 'Sakura',
+    type: 'Ave',
+    city: '神戸市',
+    state: 'CA',
+    zip: '12345'
+  },
+  '123 Main St, Sydney NSW 2000': {
+    number: '123',
+    street: 'Main',
+    type: 'St',
+    city: 'Sydney',
+    state: 'NSW',
+    zip: '2000'
+  },
+  '123 Main St, Sydney, New South Wales 2000': {
+    number: '123',
+    street: 'Main',
+    type: 'St',
+    city: 'Sydney',
+    state: 'NSW',
+    zip: '2000'
+  }
+};
+
+Object.keys(internationalAddresses).forEach(function (input) {
+  [parser, bundledParser].forEach(function (implementation) {
+    assert.deepEqual(implementation.parseLocation(input), internationalAddresses[input]);
+  });
 });
