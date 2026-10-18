@@ -28,6 +28,12 @@
     northwest   : "NW",
   };
 
+  var Australian_States = [
+    "ACT", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA",
+    "australian capital territory", "act", "new south wales", "northern territory",
+    "queensland", "south australia", "tasmania", "victoria", "western australia",
+  ];
+
   var Street_Type = {
     allee       : "aly",
     alley       : "aly",
@@ -541,9 +547,10 @@
       type    : flatten(Street_Type).sort().filter(function(v,i,arr){return arr.indexOf(v)===i }).join('|'),
       fraction : '\\d+\\/\\d+',
       state   : '\\b(?:' + keys(State_Code).concat(values(State_Code)).map(XRegExp.escape).join('|') + ')\\b',
+      au_state: '\\b(?:' + Australian_States.map(XRegExp.escape).join('|') + ')\\b',
       direct  : values(Directional).sort(function(a,b){return a.length < b.length}).reduce(function(prev,curr){return prev.concat([XRegExp.escape(curr.replace(/\w/g,'$&.')),curr])},keys(Directional)).join('|'),
       dircode : keys(Direction_Code).join("|"),
-      zip     : '(?<zip>\\d{4,5})[- ]?(?<plus4>\\d{4})?',
+      zip     : '(?<zip>\\d{5})[- ]?(?<plus4>\\d{4})?',
       corner  : '(?:\\band\\b|\\bat\\b|&|\\@)',
     };
 
@@ -619,7 +626,11 @@
     Addr_Match.city_and_state = '                       \n\
       (?:                                               \n\
         (?<city>[^\\d,]+?)'+Addr_Match.separator+'+            \n\
-        (?<state>'+Addr_Match.state+')                  \n\
+        (?:                                             \n\
+          (?<state_au>'+Addr_Match.au_state+')(?:\\W*(?<zip_au>\\d{4}))? \n\
+          |                                             \n\
+          (?<state>'+Addr_Match.state+')                \n\
+        )                                               \n\
       )                                                 \n\
       ';
 
@@ -678,6 +689,14 @@
       if(parts[k])
         parsed[key] = parts[k].trim().replace(/[^\p{L}\p{M}\p{N}\s\-#&]/gu, '');
     });
+    if(parsed.state_au){
+      parsed.state = parsed.state_au;
+      delete parsed.state_au;
+    }
+    if(parsed.zip_au){
+      parsed.zip = parsed.zip_au;
+      delete parsed.zip_au;
+    }
     each(Normalize_Map, function(map,key) {
       if(parsed[key] && map[parsed[key].toLowerCase()]) {
         parsed[key] = map[parsed[key].toLowerCase()];

@@ -634,3 +634,9 @@ Object.keys(internationalAddresses).forEach(function (input) {
     assert.deepEqual(implementation.parseLocation(input), internationalAddresses[input]);
   });
 });
+
+// Four-digit tails are postcodes only when the region is Australian.
+[parser, bundledParser].forEach(function (implementation) {
+  var parsed = implementation.parseLocation('123 Main St, Austin TX 1234');
+  assert.strictEqual(parsed && parsed.zip, undefined);
+});
