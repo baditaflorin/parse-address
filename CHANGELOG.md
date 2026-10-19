@@ -1,6 +1,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [1.1.3] - 2026-10-19
+
+### Added
+- Added explicit Brazil (`country: "BR"`) CEP extraction to the Go API, returned as `postal_code` only with conservative address context while preserving existing US ZIP behavior.
+
 ## [1.1.2] - 2019-04-15
 
 ### Changed

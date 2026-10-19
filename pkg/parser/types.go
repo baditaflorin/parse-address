@@ -19,21 +19,23 @@ type ParsedAddress struct {
 	State       string `json:"state,omitempty"`
 	ZIP         string `json:"zip,omitempty"`
 	Plus4       string `json:"plus4,omitempty"`
+	PostalCode  string `json:"postal_code,omitempty"`
 }
 
 // ParsedIntersection represents a street intersection
 type ParsedIntersection struct {
-	Prefix1 string `json:"prefix1,omitempty"`
-	Street1 string `json:"street1,omitempty"`
-	Type1   string `json:"type1,omitempty"`
-	Suffix1 string `json:"suffix1,omitempty"`
-	Prefix2 string `json:"prefix2,omitempty"`
-	Street2 string `json:"street2,omitempty"`
-	Type2   string `json:"type2,omitempty"`
-	Suffix2 string `json:"suffix2,omitempty"`
-	City    string `json:"city,omitempty"`
-	State   string `json:"state,omitempty"`
-	ZIP     string `json:"zip,omitempty"`
+	Prefix1    string `json:"prefix1,omitempty"`
+	Street1    string `json:"street1,omitempty"`
+	Type1      string `json:"type1,omitempty"`
+	Suffix1    string `json:"suffix1,omitempty"`
+	Prefix2    string `json:"prefix2,omitempty"`
+	Street2    string `json:"street2,omitempty"`
+	Type2      string `json:"type2,omitempty"`
+	Suffix2    string `json:"suffix2,omitempty"`
+	City       string `json:"city,omitempty"`
+	State      string `json:"state,omitempty"`
+	ZIP        string `json:"zip,omitempty"`
+	PostalCode string `json:"postal_code,omitempty"`
 }
 
 // ParseResult is a union type that can hold different parse results
@@ -55,7 +57,8 @@ func (p *ParsedAddress) IsEmpty() bool {
 		p.City == "" &&
 		p.State == "" &&
 		p.ZIP == "" &&
-		p.Plus4 == ""
+		p.Plus4 == "" &&
+		p.PostalCode == ""
 }
 
 // Normalize applies title casing and trimming to address fields
@@ -71,6 +74,7 @@ func (p *ParsedAddress) Normalize() {
 	p.State = strings.ToUpper(strings.TrimSpace(p.State))
 	p.ZIP = strings.TrimSpace(p.ZIP)
 	p.Plus4 = strings.TrimSpace(p.Plus4)
+	p.PostalCode = strings.TrimSpace(p.PostalCode)
 }
 
 // titleCase converts a string to title case.

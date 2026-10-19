@@ -23,6 +23,10 @@ type regexPatterns struct {
 	directional *regexp.Regexp
 }
 
+var brazilianCEPPattern = regexp.MustCompile(`\b(\d{5}-\d{3})\b`)
+
+var brazilianStateContextPattern = regexp.MustCompile(`(^|[^A-Za-z0-9])(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO|Acre|Alagoas|Amap[aá]|Amazonas|Bahia|Cear[aá]|Distrito Federal|Esp[ií]rito Santo|Goi[aá]s|Maranh[aã]o|Mato Grosso do Sul|Mato Grosso|Minas Gerais|Par[aá]|Para[ií]ba|Paran[aá]|Pernambuco|Piau[ií]|Rio de Janeiro|Rio Grande do Norte|Rio Grande do Sul|Rond[oô]nia|Roraima|Santa Catarina|S[aã]o Paulo|Sergipe|Tocantins)([^A-Za-z0-9]|$)`)
+
 // NewParser creates a new address parser
 func NewParser() *Parser {
 	p := &Parser{}
@@ -124,6 +128,61 @@ func (p *Parser) ParseLocation(address string) (*ParseResult, error) {
 	return &ParseResult{
 		Type: "none",
 	}, nil
+}
+
+// AddCountryPostalCode adds country-specific postal-code evidence to an
+// already parsed result. Brazilian CEPs require explicit country "BR", a
+// unique canonical candidate after two comma-separated address parts, no
+// later digits, and parsed locality or Brazilian state context. Otherwise
+// the existing US ZIP behavior remains unchanged.
+func (p *Parser) AddCountryPostalCode(address, country string, result *ParseResult) {
+	if !strings.EqualFold(strings.TrimSpace(country), "BR") || result == nil {
+		return
+	}
+
+	matches := brazilianCEPPattern.FindAllStringSubmatchIndex(address, -1)
+	if len(matches) != 1 {
+		return
+	}
+
+	match := matches[0]
+	prefix := address[:match[0]]
+	suffix := address[match[1]:]
+	if strings.Count(prefix, ",") < 2 || strings.IndexFunc(suffix, isASCIIDigit) >= 0 {
+		return
+	}
+	if !hasBrazilianAddressContext(prefix, result) {
+		return
+	}
+	postalCode := address[match[2]:match[3]]
+
+	switch result.Type {
+	case "address", "po_box":
+		if result.Address != nil {
+			result.Address.ZIP = ""
+			result.Address.Plus4 = ""
+			result.Address.PostalCode = postalCode
+		}
+	case "intersection":
+		if result.Intersection != nil {
+			result.Intersection.ZIP = ""
+			result.Intersection.PostalCode = postalCode
+		}
+	}
+}
+
+func hasBrazilianAddressContext(prefix string, result *ParseResult) bool {
+	if result.Address != nil && (strings.TrimSpace(result.Address.City) != "" || strings.TrimSpace(result.Address.Number) != "") {
+		return true
+	}
+	if result.Intersection != nil && strings.TrimSpace(result.Intersection.City) != "" {
+		return true
+	}
+	return brazilianStateContextPattern.MatchString(prefix)
+}
+
+func isASCIIDigit(r rune) bool {
+	return r >= '0' && r <= '9'
 }
 
 // ParseAddress parses a standard street address

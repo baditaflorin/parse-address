@@ -109,7 +109,8 @@ curl -X POST http://localhost:8080/api/v1/parse \
   -H "Content-Type: application/json" \
   -d '{
     "address": "1005 N Gravenstein Highway, Suite 500, Sebastopol, CA 95472",
-    "type": "auto"
+    "type": "auto",
+    "country": "US"
   }'
 ```
 
@@ -133,6 +134,29 @@ Response:
   }
 }
 ```
+
+#### Country-Specific Postal Codes
+
+The Go API accepts an optional ISO 3166-1 alpha-2 `country` field. The
+default and unrecognized country values retain the existing US ZIP parsing
+behavior. For `country: "BR"`, canonical Brazilian CEP values in `NNNNN-NNN`
+form are returned in `postal_code`; they are not truncated into the US `zip`
+or `plus4` fields. Extraction is conservative: the CEP must be the only
+canonical candidate, follow at least two comma-separated address parts, be the
+last numeric value, and have parsed locality or Brazilian state context.
+Ambiguous or reference-like values are left unclassified.
+
+```json
+{
+  "address": "Av. Paulista, 1000, São Paulo, SP 01310-100",
+  "type": "auto",
+  "country": "BR"
+}
+```
+
+The parsed address includes `"postal_code": "01310-100"`. This field is
+omitted for existing US responses, so clients that do not send `country` keep
+the current response shape and behavior.
 
 #### Parse Types
 - `auto` - Auto-detect address type (default)
