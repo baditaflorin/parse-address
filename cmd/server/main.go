@@ -85,7 +85,8 @@ func main() {
 
 type parseRequest struct {
 	Address string `json:"address"`
-	Type    string `json:"type,omitempty"` // "standard", "informal", "intersection", "po_box", "auto"
+	Type    string `json:"type,omitempty"`    // "standard", "informal", "intersection", "po_box", "auto"
+	Country string `json:"country,omitempty"` // ISO 3166-1 alpha-2; currently BR enables Brazilian CEP extraction
 }
 
 type parseResponse struct {
@@ -148,6 +149,9 @@ func parseHandler(p *parser.Parser) http.HandlerFunc {
 			result = &parser.ParseResult{Type: "po_box", Address: addr}
 		default: // "auto" or empty
 			result, err = p.ParseLocation(address)
+		}
+		if err == nil && req.Country != "" {
+			p.AddCountryPostalCode(address, req.Country, result)
 		}
 
 		if err != nil {
@@ -251,7 +255,7 @@ const indexHTML = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>US Address Parser - Testing Interface</title>
+    <title>Address Parser - Testing Interface</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -419,7 +423,7 @@ const indexHTML = `<!DOCTYPE html>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏠 US Address Parser</h1>
+            <h1>🏠 Address Parser</h1>
             <p>Secure, validated address parsing with live testing interface</p>
         </div>
         <div class="main">
@@ -434,6 +438,12 @@ const indexHTML = `<!DOCTYPE html>
                     <option value="informal">Informal Address</option>
                     <option value="intersection">Intersection</option>
                     <option value="po_box">PO Box</option>
+                </select>
+
+                <label for="country" style="margin-top: 15px;">Country</label>
+                <select id="country">
+                    <option value="US">United States</option>
+                    <option value="BR">Brazil</option>
                 </select>
 
                 <div class="button-group">
@@ -482,6 +492,7 @@ const indexHTML = `<!DOCTYPE html>
         async function parseAddress() {
             const address = document.getElementById('address').value.trim();
             const parseType = document.getElementById('parseType').value;
+            const country = document.getElementById('country').value;
             const resultsDiv = document.getElementById('results');
 
             if (!address) {
@@ -495,7 +506,7 @@ const indexHTML = `<!DOCTYPE html>
                 const response = await fetch('/api/v1/parse', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ address, type: parseType })
+                    body: JSON.stringify({ address, type: parseType, country })
                 });
 
                 const data = await response.json();
@@ -538,6 +549,7 @@ const indexHTML = `<!DOCTYPE html>
                 if (inter.city) html += formatResultItem('City', inter.city);
                 if (inter.state) html += formatResultItem('State', inter.state);
                 if (inter.zip) html += formatResultItem('ZIP', inter.zip);
+                if (inter.postal_code) html += formatResultItem('Postal Code', inter.postal_code);
                 html += '</div>';
             } else if (result.address) {
                 const badge = result.type === 'po_box' ? 'badge-po' : 'badge-address';
@@ -556,6 +568,7 @@ const indexHTML = `<!DOCTYPE html>
                 if (addr.state) html += formatResultItem('State', addr.state);
                 if (addr.zip) html += formatResultItem('ZIP', addr.zip);
                 if (addr.plus4) html += formatResultItem('ZIP+4', addr.plus4);
+                if (addr.postal_code) html += formatResultItem('Postal Code', addr.postal_code);
                 html += '</div>';
             }
 
